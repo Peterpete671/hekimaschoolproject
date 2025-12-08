@@ -1,5 +1,3 @@
-from django import views
-from django.shortcuts import render
 from rest_framework import viewsets, status, filters, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -15,7 +13,6 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 
-from school_inventory.inventory_app import serializers
 
 # Create your views here.
 
@@ -26,7 +23,7 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = RegisterSerializer
     permission_classes = [IsAdminTeacher] #Only admin teachers manage users
 
-class RegisterViewSet(views.GenericViewSet):
+class RegisterViewSet(viewsets.GenericViewSet):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
@@ -54,7 +51,7 @@ class SubjectViewSet(viewsets.ModelViewSet):
 
 class StudentViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
-    serializer_class = InventoryCategorySerializer
+    serializer_class = StudentSerializer
     permission_classes = [IsTeacherOrAdmin]
 
 class InventoryCategoryViewSet(viewsets.ModelViewSet):
@@ -101,21 +98,30 @@ class BorrowLogViewSet(viewsets.ModelViewSet):
         """
 
         with transaction.atomic():
-            serializer = self.get.serializer(data=request.data)
+            serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            item = get_object_or_404(InventoryItem, pk=serializer.validated_data['item'].id if isinstance(serializer.validated_data ['item'], InventoryItem) else serializer.validated_data['item'])
-            qty = serializer.validated_data['quantity']
-            if item.available.quantity < qty:
-                return Response({"detail":"Not enough available quantity"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # resolved item can be an instance (if serializer uses PrimaryKeyRelatedField) or a PK
+            item_val = serializer.validated_data.get('item')
+            if isinstance(item_val, InventoryItem):
+                item = item_val
+            else:
+                item = get_object_or_404(InventoryItem, pk=item_val)
+
+            qty = serializer.validated_data.get('quantity', 1)
+            if item.available_quantity < qty:
+                return Response({"detail": "Not enough available quantity"}, status=status.HTTP_400_BAD_REQUEST)
+
             item.available_quantity -= qty
             item.save()
+
             self.perform_create(serializer)
             headers = self.get_success_headers(serializer.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
         
     @action(detail=True, methods=['post'])
     def return_item(self, request, pk=None):
-        borrow = self.get.object()
+        borrow = self.get_object()
         if borrow.returned:
             return Response({"detail":"Already returned"}, status=status.HTTP_400_BAD_REQUEST)
         item = borrow.item
